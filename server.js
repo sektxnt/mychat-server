@@ -1,89 +1,87 @@
-const express = require("express");
-const http = require("http");
-const WebSocket = require("ws");
+// server.js
+const http = require('http');
+const WebSocket = require('ws');
 
-const app = express();
+const PORT = process.env.PORT || 10000;
 
-// Просто чтобы по GET / видеть, что сервер жив
-app.get("/", (req, res) => {
-  res.send("Signaling server is running");
+// Простой HTTP-ответ — чтобы браузер видел "OK"
+const server = http.createServer((req, res) => {
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Signaling server OK');
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Not Found');
+  }
 });
 
-const server = http.createServer(app);
+// WebSocket-сервер поверх того же HTTP
 const wss = new WebSocket.Server({ server });
 
-// roomId -> Set of clients
+// Комнаты: roomId -> Set(ws)
 const rooms = new Map();
 
-wss.on("connection", (ws) => {
-  ws.roomId = null;
-  ws.nickname = null;
+function getRoom(roomId) {
+  if (!rooms.has(roomId)) {
+    rooms.set(roomId, new Set());
+  }
+  return rooms.get(roomId);
+}
 
-  ws.on("message", (data) => {
+wss.on('connection', (ws) => {
+  ws.roomId = null;
+  ws.nickname = 'anon';
+
+  ws.on('message', (data) => {
     let msg;
     try {
       msg = JSON.parse(data.toString());
     } catch (e) {
-      console.log("Bad JSON:", data.toString());
       return;
     }
 
-    if (msg.type === "join") {
-      const { roomId, nickname } = msg;
-      ws.roomId = roomId;
-      ws.nickname = nickname;
+    // Первое сообщение — join
+    if (msg.type === 'join') {
+      ws.nickname = msg.nickname || 'anon';
+      ws.roomId = msg.roomId || 'room1';
 
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, new Set());
-      }
-      rooms.get(roomId).add(ws);
+      const room = getRoom(ws.roomId);
+      room.add(ws);
 
-      console.log(`User ${nickname} joined room ${roomId}`);
-
-      broadcast(roomId, {
-        type: "system",
-        text: `${nickname} joined`,
+      // Шлём системку остальным в комнате
+      room.forEach((client) => {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'system',
+            text: `${ws.nickname} подключился`
+          }));
+        }
       });
+
       return;
     }
 
-    const roomId = ws.roomId;
-    if (!roomId || !rooms.has(roomId)) return;
+    // Дальше: offer/answer/candidate/chat — просто ретранслируем в комнату
+    const room = rooms.get(ws.roomId);
+    if (!room) return;
 
-    const payload = {
-      ...msg,
-      from: ws.nickname,
-    };
+    room.forEach((client) => {
+      if (client.readyState !== WebSocket.OPEN || client === ws) return;
 
-    rooms.get(roomId).forEach((client) => {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(payload));
-      }
+      client.send(JSON.stringify({
+        ...msg,
+        from: ws.nickname,
+      }));
     });
   });
 
-  ws.on("close", () => {
-    const roomId = ws.roomId;
-    if (roomId && rooms.has(roomId)) {
-      rooms.get(roomId).delete(ws);
-      if (rooms.get(roomId).size === 0) {
-        rooms.delete(roomId);
-      }
-    }
+  ws.on('close', () => {
+    const room = rooms.get(ws.roomId);
+    if (!room) return;
+    room.delete(ws);
   });
 });
 
-function broadcast(roomId, obj) {
-  if (!rooms.has(roomId)) return;
-  rooms.get(roomId).forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(obj));
-    }
-  });
-}
-
-const PORT = process.env.PORT || 8080; // ВАЖНО для Render!
-
 server.listen(PORT, () => {
-  console.log(`Signaling server on port ${PORT}`);
+  console.log('Signaling server listening on port', PORT);
 });
