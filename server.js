@@ -1,10 +1,8 @@
-// server.js
 const http = require('http');
 const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 10000;
 
-// Простой HTTP-ответ — чтобы браузер видел "OK"
 const server = http.createServer((req, res) => {
   if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -15,10 +13,8 @@ const server = http.createServer((req, res) => {
   }
 });
 
-// WebSocket-сервер поверх того же HTTP
 const wss = new WebSocket.Server({ server });
 
-// Комнаты: roomId -> Set(ws)
 const rooms = new Map();
 
 function getRoom(roomId) {
@@ -40,7 +36,6 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // Первое сообщение — join
     if (msg.type === 'join') {
       ws.nickname = msg.nickname || 'anon';
       ws.roomId = msg.roomId || 'room1';
@@ -48,7 +43,6 @@ wss.on('connection', (ws) => {
       const room = getRoom(ws.roomId);
       room.add(ws);
 
-      // Шлём системку остальным в комнате
       room.forEach((client) => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({
@@ -61,7 +55,6 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // Дальше: offer/answer/candidate/chat — просто ретранслируем в комнату
     const room = rooms.get(ws.roomId);
     if (!room) return;
 
